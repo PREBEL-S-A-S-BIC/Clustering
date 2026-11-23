@@ -17,6 +17,7 @@ Consulta los resultados generados por el proceso externo de actualización.
 from __future__ import annotations
 
 import io
+import hashlib
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -689,6 +690,8 @@ valores (`liquido` y `Líquido` son lo mismo).
     col4.metric("Ingreso proyectado",
                 f"$ {formato_miles(resultados['ingreso_proyectado'].sum())}")
 
+    _simulador_mensual(modelo, resultados, "lote")
+
     # --- Semáforo de confianza --------------------------------------------
     conteo = resultados["confianza"].value_counts()
     n_revisar = int(conteo.get("Baja - revisar", 0))
@@ -750,6 +753,124 @@ valores (`liquido` y `Líquido` son lo mismo).
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
     )
+
+
+def _simulador_mensual(modelo, resultados, clave):
+    """Escenario editable para los productos y canales elegidos."""
+    from src import simulacion
+
+    firma = hashlib.sha256(resultados.to_json(orient="split").encode()).hexdigest()[:16]
+    prefijo = f"sim_{clave}_{firma}"
+    datos = resultados.reset_index(drop=True)
+    with st.expander("Simular ajustes mensuales", expanded=False):
+        st.caption(
+            "Los pesos estacionales redistribuyen el total del modelo entre meses. "
+            "El porcentaje comercial se aplica después y modifica el volumen."
+        )
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            opciones = [6, 12] if "unidades_sugeridas_anual" in datos else [6]
+            horizonte = st.selectbox("Horizonte en meses", opciones, key=f"{prefijo}_horizonte")
+        with c2:
+            hoy = datetime.now(timezone(timedelta(hours=-5)))
+            anio = st.number_input("Año de lanzamiento", min_value=1, max_value=9998,
+                                   value=hoy.year, step=1, key=f"{prefijo}_anio")
+        with c3:
+            opciones_canal = sorted(datos["Canal"].unique())
+            canales = st.multiselect("Canales del escenario", opciones_canal,
+                                      default=opciones_canal, key=f"{prefijo}_canales")
+        elegibles = datos.index[datos["Canal"].isin(canales)].tolist()
+        if st.checkbox("Elegir productos específicos", key=f"{prefijo}_elegir"):
+            elegidos = st.multiselect(
+                "Productos y canales", elegibles,
+                format_func=lambda i: (
+                    f"{i + 1} · {datos.loc[i].get('Descripcion', 'Producto')} "
+                    f"· {datos.loc[i, 'Canal']}"
+                ),
+                key=f"{prefijo}_productos",
+            )
+        else:
+            elegidos = elegibles
+        if not elegidos:
+            st.info("Selecciona al menos un producto y canal para simular.")
+            return
+        seleccion = datos.loc[elegidos]
+        plan = simulacion.construir_plan(seleccion, modelo, horizonte, anio)
+        configuracion = pd.DataFrame({
+            "Mes": sorted(plan["Mes"].unique()),
+            "Peso estacional": 1.0,
+            "Ajuste comercial (%)": 0.0,
+            "Motivo": "",
+        })
+        editor_firma = hashlib.sha256(plan.to_json(orient="split").encode()).hexdigest()[:16]
+        editor = f"{prefijo}_{editor_firma}"
+        revision = st.session_state.get(f"{editor}_revision", 0)
+        st.caption(
+            "El mes inicial de cada producto corresponde a su mes de lanzamiento. "
+            "Un peso 2 duplica la importancia relativa de ese mes frente a un peso 1. "
+            "Los ajustes se aplican a los productos y canales seleccionados. "
+            "Cambiar el alcance, el año o el horizonte inicia otro escenario."
+        )
+        if st.button("Restablecer ajustes", key=f"{editor}_restablecer"):
+            st.session_state[f"{editor}_revision"] = revision + 1
+            st.rerun()
+        ajustes = st.data_editor(
+            configuracion, hide_index=True, num_rows="fixed", width="stretch",
+            disabled=["Mes"], key=f"{editor}_tabla_{revision}",
+            column_config={
+                "Mes": st.column_config.TextColumn("Mes calendario"),
+                "Peso estacional": st.column_config.NumberColumn(
+                    min_value=0, step=0.1, format="%.2f", required=True,
+                ),
+                "Ajuste comercial (%)": st.column_config.NumberColumn(
+                    min_value=-100, step=1, format="%.1f", required=True,
+                    help="Porcentaje aplicado al volumen después de redistribuirlo.",
+                ),
+                "Motivo": st.column_config.TextColumn(
+                    help="Promoción, exhibición, negociación u otra razón del ajuste.",
+                ),
+            },
+        )
+        try:
+            escenario = simulacion.aplicar_ajustes(plan, ajustes)
+        except ValueError as error:
+            st.error(str(error))
+            return
+        base = int(escenario["Base del modelo"].sum())
+        ajustado = int(escenario["Unidades ajustadas"].sum())
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total del modelo", formato_miles(base))
+        m2.metric("Total ajustado", formato_miles(ajustado))
+        m3.metric("Diferencia en unidades", formato_miles(ajustado - base))
+        columnas_volumen = ["Base del modelo", "Con estacionalidad", "Unidades ajustadas"]
+        mensual = escenario.groupby("Mes", as_index=False)[columnas_volumen].sum()
+        grafica = mensual.melt(id_vars="Mes", var_name="Escenario", value_name="Unidades")
+        fig = px.line(grafica, x="Mes", y="Unidades", color="Escenario", markers=True)
+        fig.update_layout(height=340, xaxis_title="Mes calendario", yaxis_title="Unidades")
+        st.plotly_chart(fig, width="stretch", key=f"{prefijo}_grafica")
+        detalle = escenario.drop(columns="Factor base")
+        st.dataframe(detalle, hide_index=True, width="stretch")
+        st.caption(
+            "El redondeo se realiza por producto y canal, conservando su total ajustado. "
+            "Descarga el resultado para conservar los porcentajes y sus motivos."
+        )
+        identificacion = [c for c in ["Registro", "Material", "Descripcion", "Marca",
+                                     "Canal", "Subcategoria", "Grupo", "Tipo", "Tono", "PVP"]
+                          if c in detalle]
+        resumen = detalle.groupby(identificacion, dropna=False, as_index=False)[
+            columnas_volumen + ["Diferencia"]
+        ].sum()
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            detalle.to_excel(writer, sheet_name="Simulacion_Mensual", index=False)
+            ajustes.to_excel(writer, sheet_name="Ajustes", index=False)
+            resumen.to_excel(writer, sheet_name="Resumen", index=False)
+        st.download_button(
+            "Descargar simulación en Excel", data=buffer.getvalue(),
+            file_name="Simulacion_Lanzamientos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{prefijo}_descarga",
+        )
 
 
 def _tab_pendientes():
@@ -834,15 +955,20 @@ def _tab_producto_individual(modelo, modulo):
         )
         st.caption("Julio a diciembre = segundo semestre, que históricamente vende más.")
 
-    if not st.button("Calcular sugerido", type="primary"):
+    firma = (canal, marca, subcategoria, grupo, tipo, tono, pvp, mes,
+             cfg.ARCHIVO_MAESTRO.stat().st_mtime_ns)
+    if st.button("Calcular sugerido", type="primary"):
+        calculo = modulo.sugerir_lanzamiento(
+            modelo, canal=canal, marca=marca, subcategoria=subcategoria,
+            grupo=grupo, tipo=tipo, tono=tono, pvp=pvp,
+            mes_lanzamiento=mes, mostrar=False,
+        )
+        st.session_state["consulta_lanzamiento"] = (firma, calculo)
+    guardado = st.session_state.get("consulta_lanzamiento")
+    if guardado is None or guardado[0] != firma:
         st.info("Define los atributos y presiona **Calcular sugerido**.")
         return
-
-    r = modulo.sugerir_lanzamiento(
-        modelo, canal=canal, marca=marca, subcategoria=subcategoria,
-        grupo=grupo, tipo=tipo, tono=tono, pvp=pvp,
-        mes_lanzamiento=mes, mostrar=False,
-    )
+    r = guardado[1]
 
     st.divider()
 
@@ -855,6 +981,15 @@ def _tab_producto_individual(modelo, modulo):
     col3.metric("SUGERIDO 6 MESES (P75)", formato_miles(r["unidades_sugeridas"]),
                 help="Cubre el 75% de los escenarios: nivel de servicio elegido por el negocio")
     col4.metric("Ingreso proyectado", f"$ {formato_miles(r['ingreso_proyectado'])}")
+
+    base_simulacion = pd.DataFrame([{
+        **r["atributos"], "unidades_sugeridas": r["unidades_sugeridas"],
+    }])
+    base_simulacion = modulo.agregar_horizonte_anual(
+        base_simulacion, modulo.preparar_features(base_simulacion, modelo),
+        modelo, col_semestral="unidades_sugeridas",
+    )
+    _simulador_mensual(modelo, base_simulacion, "individual")
 
     # --- Reparto mensual ---------------------------------------------------
     st.markdown("**Cómo repartir esa cantidad mes a mes**")
