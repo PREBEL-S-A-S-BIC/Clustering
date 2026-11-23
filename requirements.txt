@@ -1,0 +1,57 @@
+# =============================================================================
+# Cosnova Clustering - Dependencias del proyecto
+#
+# Esta lista sale de escanear los imports reales de todos los .py y .ipynb del
+# proyecto, no de suposiciones. Versiones verificadas en Python 3.10 (Windows 11).
+#
+# Instalacion en el entorno virtual:
+#   C:\venvs\cosnova\Scripts\python.exe -m pip install -r requirements.txt
+#
+# NOTA SOBRE LA UBICACION DEL ENTORNO VIRTUAL
+# El entorno NO va dentro de la carpeta del proyecto. La ruta del proyecto tiene
+# 175 caracteres y las rutas internas de un .venv aqui llegarian a 272, por
+# encima del limite de 260 de Windows (las rutas largas estan deshabilitadas en
+# este equipo). La instalacion fallaria. Por eso vive en C:\venvs\cosnova.
+# =============================================================================
+
+# --- Manipulacion de datos ---------------------------------------------------
+pandas==2.3.3
+numpy==2.2.6
+
+# Motor de lectura/escritura de los archivos .parquet.
+# No aparece en ningun 'import' del codigo, pero es OBLIGATORIO: es el motor que
+# pandas usa por debajo en to_parquet() / read_parquet(). Sin el, el pipeline
+# falla al guardar maestro.parquet. No quitarlo por "no estar importado".
+pyarrow==25.0.1
+
+# --- Lectura y escritura de Excel -------------------------------------------
+openpyxl==3.1.5
+
+# --- Modelado y metricas -----------------------------------------------------
+scikit-learn==1.7.2      # KMeans, DBSCAN, Agglomerative, PCA, t-SNE, GradientBoosting
+scipy==1.15.3            # dendrogramas (scipy.cluster.hierarchy)
+
+# --- Visualizacion -----------------------------------------------------------
+matplotlib==3.10.9
+seaborn==0.13.2
+plotly==7.1.0            # graficas interactivas de las apps
+
+# --- Aplicaciones ------------------------------------------------------------
+streamlit==1.64.0
+
+# --- Notebooks (opcional) ----------------------------------------------------
+# Solo se necesitan para ejecutar notebooks/. El pipeline (run_pipeline.py) y
+# las dos aplicaciones funcionan sin estos dos paquetes.
+notebook==7.6.3
+ipykernel==7.3.0
+
+# =============================================================================
+# QUITADO A PROPOSITO
+#
+# yellowbrick: estaba declarado en la version anterior de este archivo porque
+#   figuraba en el stack pedido al inicio, pero el escaneo de imports confirmo
+#   que NO se usa en ningun archivo del proyecto. Las curvas de codo y silueta
+#   estan implementadas directamente en src/clustering.py (evaluar_k,
+#   k_por_codo, recomendar_k), que da control sobre el criterio de seleccion de
+#   k. Instalarlo solo agregaba peso y una dependencia mas que mantener.
+# =============================================================================

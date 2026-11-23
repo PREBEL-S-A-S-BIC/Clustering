@@ -1,0 +1,25 @@
+# Configuracion de las aplicaciones Streamlit del proyecto.
+# Streamlit lee este archivo automaticamente al arrancar desde la raiz.
+
+[browser]
+# Sin telemetria: son datos comerciales de un cliente, no se envia nada afuera.
+gatherUsageStats = false
+
+[server]
+# Los Excel de lanzamientos son pequenos; 50 MB es margen mas que suficiente.
+maxUploadSize = 50
+
+[theme]
+# Paleta alineada con las figuras del proyecto, para que la app y los
+# reportes se vean como una sola cosa.
+primaryColor = "#3E7CB1"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6FA"
+textColor = "#1F2933"
+font = "sans serif"
+
+# NOTA: no se oculta el detalle de errores (client.showErrorDetails). La app ya
+# atrapa los fallos esperables (archivo invalido, columnas faltantes, Excel
+# abierto) y muestra un mensaje entendible. Si aparece algo inesperado, es mejor
+# que quede visible para poder reportarlo que dejar al usuario con un mensaje
+# generico y sin nada que copiar.
